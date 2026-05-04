@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+
+<head>
+  <meta charset="UTF-8">
+  <title>قانون حفظ الطاقة</title>
+
+  <style>
+    body {
+      margin: 0;
+      background: #0D1117;
+      color: white;
+      font-family: sans-serif;
+    }
+
+    h1 {
+      text-align: center;
+      color: #4ade80;
+      margin: 8px 0 0;
+    }
+
+    h2 {
+      text-align: center;
+      color: #aaa;
+      margin: 0 0 10px;
+      font-size: 14px;
+    }
+
+    canvas {
+      display: block;
+      margin: auto;
+      background: linear-gradient(#0D1117, #1A2332);
+    }
+
+    .panel {
+      max-width: 900px;
+      margin: auto;
+      padding: 10px;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .col {
+      flex: 1;
+    }
+
+    .bar {
+      height: 12px;
+      background: #222;
+      border-radius: 6px;
+      overflow: hidden;
+      margin: 4px 0;
+    }
+
+    .fill {
+      height: 100%;
+    }
+
+    .label {
+      font-size: 11px;
+      color: #aaa;
+    }
+
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .run {
+      background: #16a34a;
+      color: white;
+    }
+
+    .reset {
+      background: #555;
+      color: white;
+    }
+
+    .selector div {
+      flex: 1;
+      padding: 6px;
+      text-align: center;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .selector .active {
+      background: #16a34a;
+    }
+
+    input[type=range] {
+      width: 100%;
+    }
+
+    .time {
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    #aiBox {
+      max-width: 900px;
+      margin: 10px auto;
+      padding: 10px;
+      background: #111827;
+      border-radius: 10px;
+      border: 1px solid #1f2937;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>قانون حفظ الطاقة</h1>
+  <h2>محاكاة كرة على منحنى</h2>
+
+  <canvas id="canvas" width="900" height="350"></canvas>
+
+  <!-- AI -->
+  <div id="aiBox">
+    🤖 <b>شرح ذكي:</b>
+    <div id="aiText">غيّر القيم واضغط تشغيل...</div>
+  </div>
+
+  <div class="panel">
+
+    <!-- Path -->
+    <div class="row selector" id="selector"></div>
+
+    <!-- Controls -->
+    <label>الارتفاع: <span id="hVal">5</span></label>
+    <input type="range" id="h" min="1" max="10" step="0.1" value="5">
+
+    <label>السرعة الابتدائية: <span id="vVal">0</span></label>
+    <input type="range" id="v" min="0" max="8" step="0.1" value="0">
+
+    <label>الاحتكاك: <span id="muVal">0.3</span></label>
+    <input type="range" id="mu" min="0" max="0.8" step="0.01" value="0.3">
+
+    <div style="margin-top:8px;">
+      <button class="run" onclick="run()">تشغيل</button>
+      <button class="reset" onclick="reset()">إعادة تعيين</button>
+      <button class="reset" onclick="stopSim()">إيقاف</button>
+    </div>
+
+    <!-- Energy -->
+    <div class="row">
+
+      <div class="col">
+        <b style="color:red;">مع احتكاك</b>
+
+        <div class="label">طاقة حركة</div>
+        <div class="bar">
+          <div id="keF" class="fill" style="background:orange"></div>
+        </div>
+
+        <div class="label">طاقة وضع</div>
+        <div class="bar">
+          <div id="peF" class="fill" style="background:green"></div>
+        </div>
+
+        <div class="label">الطاقة الكلية</div>
+        <div class="bar">
+          <div id="totF" class="fill" style="background:red"></div>
+        </div>
+
+        <div class="time" id="timeF"></div>
+      </div>
+
+      <div class="col">
+        <b style="color:deepskyblue;">بدون احتكاك</b>
+
+        <div class="label">طاقة حركة</div>
+        <div class="bar">
+          <div id="keNF" class="fill" style="background:orange"></div>
+        </div>
+
+        <div class="label">طاقة وضع</div>
+        <div class="bar">
+          <div id="peNF" class="fill" style="background:green"></div>
+        </div>
+
+        <div class="label">الطاقة الكلية</div>
+        <div class="bar">
+          <div id="totNF" class="fill" style="background:deepskyblue"></div>
+        </div>
+
+        <div class="time" id="timeNF"></div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+
+    const g = 9.8, L = 10, dt = 1 / 60;
+
+    let H = 5, v0 = 0;
+    let mu = 0.3;
+
+    let hillType = "cosine";
+    let running = false;
+
+    class Ball {
+      constructor() {
+        this.x = 0;
+        this.v = Math.max(v0, 0.1);
+        this.energy = g * H + 0.5 * this.v * this.v;
+        this.active = true;
+        this.time = 0;
+        this.stoppedAt = null;
+      }
+    }
+
+    let bF, bNF;
+
+    /* ---------------- HILL ---------------- */
+    function hill(x) {
+      let t = x / L;
+      switch (hillType) {
+
+        // 🔥 FIXED: straight 45° ramp (no direction bug)
+        case "cosine":
+          return H * (1 - t);
+
+        case "valley":
+          return Math.max(0, H * (4.6 * t * t - 4.1 * t + 1));
+
+        case "steep":
+          return H * (1 - t) * (1 - t);
+
+        case "rolling":
+          return Math.max(0, H * (1 - t) * (0.7 + 0.3 * Math.cos(2 * Math.PI * t)));
+      }
+    }
+
+    /* ---------------- SLOPE ---------------- */
+    function slope(x) {
+      let t = x / L;
+      switch (hillType) {
+
+        case "cosine":
+          return -H / L; // constant slope (45° style simplified)
+
+        case "valley":
+          return H * (9.2 * x / (L * L) - 4.1 / L);
+
+        case "steep":
+          return -2 * H / L * (1 - t);
+
+        case "rolling":
+          return H / L * ((-(0.7 + 0.3 * Math.cos(2 * Math.PI * t))) +
+            (1 - t) * (-0.6 * Math.PI * Math.sin(2 * Math.PI * t)));
+      }
+    }
+
+    function theta(x) {
+      return Math.atan(-slope(x));
+    }
+
+    /* ---------------- PHYSICS (FIXED) ---------------- */
+    function update(b, friction) {
+      if (!b.active) return;
+
+      let th = theta(b.x);
+
+      let a = g * Math.sin(th);
+
+      if (friction) {
+        // friction always opposes motion along surface
+        const normal = g * Math.cos(th);
+        const dir = b.v === 0 ? 0 : Math.sign(b.v);
+
+        if (dir !== 0) {
+          a -= mu * normal * dir;
+        }
+      }
+
+      b.v += a * dt;
+
+      if (Math.abs(b.v) < 0.005 && friction) {
+        b.v = 0;
+      }
+
+      b.x += b.v * Math.cos(th) * dt;
+      b.time += dt;
+
+      if (b.x >= L) {
+        b.x = L;
+        b.v = 0;
+        b.active = false;
+        if (!b.stoppedAt) b.stoppedAt = b.time;
+      }
+
+      let h = hill(b.x);
+      b.energy = 0.5 * b.v * b.v + g * h;
+    }
+
+    /* ---------------- CANVAS ---------------- */
+    const c = document.getElementById("canvas");
+    const ctx = c.getContext("2d");
+
+    function draw() {
+      ctx.clearRect(0, 0, c.width, c.height);
+
+      ctx.beginPath();
+      for (let i = 0; i <= 200; i++) {
+        let x = i / 200 * L;
+        let y = hill(x);
+
+        let px = 40 + (x / L) * (c.width - 80);
+        let py = c.height - 40 - (y / H) * (c.height - 80);
+
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+
+      ctx.strokeStyle = "#4ade80";
+      ctx.stroke();
+
+      drawBall(bF, "red", "مع احتكاك");
+      drawBall(bNF, "blue", "بدون احتكاك");
+
+      updateBars();
+    }
+
+    function drawBall(b, color, label) {
+      let x = 40 + (b.x / L) * (c.width - 80);
+      let y = c.height - 40 - (hill(b.x) / H) * (c.height - 80);
+
+      ctx.beginPath();
+      ctx.arc(x, y, 10, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      ctx.fillStyle = "white";
+      ctx.fillText(label, x - 35, y - 25);
+
+      if (b.stoppedAt) {
+        ctx.fillStyle = color;
+        ctx.fillText(b.stoppedAt.toFixed(1) + " ث", x - 25, y - 40);
+      }
+    }
+
+    /* ---------------- ENERGY ---------------- */
+    function updateBars() {
+      let e0 = g * H + 0.5 * v0 * v0;
+
+      function set(id, val) {
+        document.getElementById(id).style.width = (val / e0 * 100) + "%";
+      }
+
+      set("keF", 0.5 * bF.v * bF.v);
+      set("peF", g * hill(bF.x));
+      set("totF", bF.energy);
+
+      set("keNF", 0.5 * bNF.v * bNF.v);
+      set("peNF", g * hill(bNF.x));
+      set("totNF", bNF.energy);
+    }
+
+    /* ---------------- AI ---------------- */
+  function ai(stage) {
+    let t = "";
+
+    if (stage === "start") {
+      t = "بدأت الحركة: الطاقة تتحول من وضع إلى حركة.";
+    }
+
+    if (stage === "running") {
+      t = "النظام في حالة حركة: يتم تحويل الطاقة باستمرار.";
+    }
+
+    if (stage === "stop") {
+      t = `
+    ⛔ تم إيقاف المحاكاة يدويًا<br><br>
+
+    🔴 مع الاحتكاك: توقفت عند ${bF.stoppedAt?.toFixed(2)} ث<br>
+    🔵 بدون احتكاك: عند الإيقاف لم يكن قد توقف بالكامل<br><br>
+
+    📌 ملاحظة تعليمية: الإيقاف لا يعني توازن فيزيائي، بل تدخل خارجي.
+    `;
+    }
+
+    if (stage === "end") {
+      t = `
+    🔴 مع الاحتكاك توقف عند ${bF.stoppedAt?.toFixed(2)} ث<br>
+    🔵 بدون احتكاك يستمر بالحركة<br>
+    📌 الطاقة محفوظة لكن تتحول.
+    `;
+    }
+
+    document.getElementById("aiText").innerHTML = t;
+  }
+    /* ---------------- LOOP ---------------- */
+    function loop() {
+      if (!running) return;
+
+      update(bF, true);
+      update(bNF, false);
+
+      ai("running");
+
+      if (!bF.active && !bNF.active) {
+        running = false;
+        ai("end");
+      }
+
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function run() {
+      bF = new Ball();
+      bNF = new Ball();
+      running = true;
+      ai("start");
+      loop();
+    }
+
+    function reset() {
+      running = false;
+      bF = new Ball();
+      bNF = new Ball();
+      ai("idle");
+      draw();
+    }
+
+    /* ---------------- SLIDERS ---------------- */
+    h.oninput = e => { H = +e.target.value; hVal.textContent = H; }
+    v.oninput = e => { v0 = +e.target.value; vVal.textContent = v0; }
+    mu.oninput = e => { mu = +e.target.value; muVal.textContent = mu.toFixed(2); }
+
+    /* ---------------- PATHS ---------------- */
+    const types = [
+      { k: "cosine", n: "كوساين" },
+      { k: "valley", n: "واد" },
+      { k: "steep", n: "حاد" },
+      { k: "rolling", n: "تضاريس" }
+    ];
+
+    const sel = document.getElementById("selector");
+
+    types.forEach(t => {
+      let d = document.createElement("div");
+      d.innerText = t.n;
+      d.onclick = () => {
+        hillType = t.k;
+        document.querySelectorAll(".selector div").forEach(x => x.classList.remove("active"));
+        d.classList.add("active");
+        reset();
+      };
+      sel.appendChild(d);
+    });
+  function stopSim() {
+    running = false;
+
+    // freeze both balls
+    bF.active = false;
+    bNF.active = false;
+
+    // ensure stop times exist
+    if (!bF.stoppedAt) bF.stoppedAt = bF.time;
+    if (!bNF.stoppedAt) bNF.stoppedAt = bNF.time;
+
+    ai("stop");
+    draw();
+  }
+    sel.children[0].classList.add("active");
+
+    reset();
+
+  </script>
+
+</body>
+
+</html>
